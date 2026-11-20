@@ -248,9 +248,35 @@ cd frontend && pnpm install && pnpm dev
 
 ## 七、效果展示
 
-建议自行截图补充。**不要直接引用上游仓库的截图**，那是他人的演示环境，放在自己的仓库里既容易失效也不合适。
+> 以下均为本机真实运行的界面截图（账号 `saber123`），业务数据由 `scripts/demo-seed.sql` 生成，属演示数据，非真实用户。
 
-建议至少补三张：登录页、面试进行中、死信管理页。
+| 登录 / 注册 | 模拟面试（选模式、方向、难度） |
+|---|---|
+| ![](assets/screenshots/01-login.png) | ![](assets/screenshots/02-interview-hub.png) |
+
+| 简历管理（AI 分析与评分） | 知识库管理（向量化状态、使用统计） |
+|---|---|
+| ![](assets/screenshots/03-resume-library.png) | ![](assets/screenshots/04-knowledgebase.png) |
+
+| RAG 问答（多轮对话 + 知识库引用） | 面试记录（分数与历史） |
+|---|---|
+| ![](assets/screenshots/05-rag-chat.png) | ![](assets/screenshots/06-interview-history.png) |
+
+| 死信管理（失败归档与重投） | 系统设置（Provider / ASR / TTS） |
+|---|---|
+| ![](assets/screenshots/07-dead-letter.png) | ![](assets/screenshots/08-settings.png) |
+
+**重新生成截图**（需要后端 8080、前端 5173 同时在跑）：
+
+```bash
+# 1) 灌入演示数据（覆盖死信、简历评分、RAG 会话；不影响其他账号）
+docker cp scripts/demo-seed.sql interview-postgres:/tmp/demo-seed.sql
+docker exec interview-postgres psql -U postgres -d interview_guide -f /tmp/demo-seed.sql
+
+# 2) 截图（默认用系统 Chrome，无需下载 Playwright 浏览器）
+cd frontend
+DEMO_USER=saber123 DEMO_PASS=saber123 node scripts/capture-screenshots.mjs
+```
 
 ---
 
