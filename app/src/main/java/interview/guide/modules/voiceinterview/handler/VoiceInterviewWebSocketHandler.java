@@ -9,6 +9,7 @@ import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.context.VoiceContextCompressor;
+import interview.guide.modules.voiceinterview.security.JwtHandshakeInterceptor;
 import interview.guide.modules.voiceinterview.service.QwenAsrService;
 import interview.guide.modules.voiceinterview.service.QwenTtsService;
 import interview.guide.modules.voiceinterview.service.DashscopeLlmService;
@@ -148,6 +149,19 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String sessionId = extractSessionId(session);
+
+        // 握手拦截器只回答"你是不是合法用户"，这里还要回答"这个会话是不是你的"。
+        // 少了这一步，任何合法用户改一下 URL 里的 sessionId 就能连进别人的语音面试。
+        Object attrUserId = session.getAttributes().get(JwtHandshakeInterceptor.ATTR_USER_ID);
+        VoiceInterviewSessionEntity owned = interviewService.getSession(sessionId);
+        if (!(attrUserId instanceof Long userId)
+            || owned == null
+            || !userId.equals(owned.getUserId())) {
+            log.warn("WebSocket 连接被拒：会话不存在或不属于当前用户, sessionId={}, userId={}",
+                sessionId, attrUserId);
+            session.close(CloseStatus.POLICY_VIOLATION.withReason("会话不存在或无权访问"));
+            return;
+        }
 
         // Increase message size limits for audio streaming
         // 1 second of PCM audio @ 16kHz, 16-bit = ~32KB raw, ~42KB base64

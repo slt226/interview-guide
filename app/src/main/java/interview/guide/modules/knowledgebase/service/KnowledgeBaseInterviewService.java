@@ -3,6 +3,7 @@ package interview.guide.modules.knowledgebase.service;
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.service.InterviewSessionService;
@@ -55,7 +56,7 @@ public class KnowledgeBaseInterviewService {
   }
 
   public InterviewSessionDTO createSession(CreateKnowledgeBaseInterviewRequest request) {
-    knowledgeBaseRepository.findById(request.knowledgeBaseId())
+    knowledgeBaseRepository.findByIdAndUserId(request.knowledgeBaseId(), CurrentUser.requireId())
         .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
 
     String category = trimToNull(request.category());
@@ -103,7 +104,7 @@ public class KnowledgeBaseInterviewService {
       String difficulty,
       int mainQuestionCount
   ) {
-    knowledgeBaseRepository.findById(knowledgeBaseId)
+    knowledgeBaseRepository.findByIdAndUserId(knowledgeBaseId, CurrentUser.requireId())
         .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
 
     String normalizedCategory = trimToNull(category);

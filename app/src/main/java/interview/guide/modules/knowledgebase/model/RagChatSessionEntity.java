@@ -17,7 +17,8 @@ import java.util.Set;
  */
 @Entity
 @Table(name = "rag_chat_sessions", indexes = {
-    @Index(name = "idx_rag_session_updated", columnList = "updatedAt")
+    @Index(name = "idx_rag_session_updated", columnList = "updatedAt"),
+    @Index(name = "idx_rag_session_user_updated", columnList = "userId,updatedAt")
 })
 @Getter
 @Setter
@@ -27,6 +28,12 @@ public class RagChatSessionEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /**
+     * 归属用户：数据隔离的唯一可信来源，只能从登录态取
+     */
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
 
     /**
      * 会话标题（可自动生成或用户自定义）

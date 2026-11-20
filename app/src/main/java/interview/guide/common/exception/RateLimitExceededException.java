@@ -9,7 +9,6 @@ public class RateLimitExceededException extends BusinessException {
     public RateLimitExceededException() {
         super(ErrorCode.RATE_LIMIT_EXCEEDED, ErrorCode.RATE_LIMIT_EXCEEDED.getMessage());
     }
-
     public RateLimitExceededException(String message) {
         super(ErrorCode.RATE_LIMIT_EXCEEDED, message);
     }

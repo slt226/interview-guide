@@ -2,6 +2,7 @@ package interview.guide.modules.interviewschedule.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
 import interview.guide.modules.interviewschedule.model.InterviewScheduleDTO;
 import interview.guide.modules.interviewschedule.model.InterviewScheduleEntity;
@@ -31,6 +32,7 @@ public class InterviewScheduleService {
     public InterviewScheduleDTO create(CreateInterviewRequest request) {
         InterviewScheduleEntity entity = new InterviewScheduleEntity();
         BeanUtils.copyProperties(request, entity);
+        entity.setUserId(CurrentUser.requireId());   // owner 只来自登录态
         entity.setStatus(InterviewStatus.PENDING);
 
         return toDTO(repository.save(entity));
@@ -39,13 +41,15 @@ public class InterviewScheduleService {
     @Transactional
     public InterviewScheduleDTO update(Long id, CreateInterviewRequest request) {
         InterviewScheduleEntity entity = getByIdOrThrow(id);
+        // BeanUtils.copyProperties 会按同名属性拷贝；userId 不在 request 中，不会被覆盖
         BeanUtils.copyProperties(request, entity, "id", "status");
         return toDTO(repository.save(entity));
     }
 
     @Transactional
     public void delete(Long id) {
-        repository.deleteById(id);
+        // 先按 owner 查，删不到别人的日程
+        repository.delete(getByIdOrThrow(id));
     }
 
     @Transactional
@@ -56,14 +60,17 @@ public class InterviewScheduleService {
     }
 
     public List<InterviewScheduleDTO> getAll(String status, LocalDateTime start, LocalDateTime end) {
+        Long userId = CurrentUser.requireId();
         List<InterviewScheduleEntity> entities;
 
         if (start != null && end != null) {
-            entities = repository.findByInterviewTimeBetween(start, end);
+            entities = repository.findByUserIdAndInterviewTimeBetweenOrderByInterviewTimeAsc(
+                userId, start, end);
         } else if (status != null) {
-            entities = repository.findByStatus(InterviewStatus.valueOf(status));
+            entities = repository.findByUserIdAndStatusOrderByInterviewTimeAsc(
+                userId, InterviewStatus.valueOf(status));
         } else {
-            entities = repository.findAll();
+            entities = repository.findByUserIdOrderByInterviewTimeAsc(userId);
         }
 
         return entities.stream()
@@ -76,7 +83,7 @@ public class InterviewScheduleService {
     }
 
     private InterviewScheduleEntity getByIdOrThrow(Long id) {
-        return repository.findById(id)
+        return repository.findByIdAndUserId(id, CurrentUser.requireId())
             .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SCHEDULE_NOT_FOUND, "面试日程不存在: " + id));
     }
 

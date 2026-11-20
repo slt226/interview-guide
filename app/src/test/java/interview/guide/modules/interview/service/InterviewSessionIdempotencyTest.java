@@ -10,6 +10,8 @@ import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
 import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.testsupport.TestAuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +56,7 @@ class InterviewSessionIdempotencyTest {
 
   @BeforeEach
   void setUp() {
+    TestAuthContext.login();
     objectMapper = new ObjectMapper();
     service = new InterviewSessionService(
         questionService,
@@ -72,6 +75,11 @@ class InterviewSessionIdempotencyTest {
         });
   }
 
+  @AfterEach
+  void tearDown() {
+    TestAuthContext.logout();
+  }
+
   @Test
   @DisplayName("Redis 结果映射丢失后应从数据库恢复同一会话，不再次调用 LLM")
   void restoresExistingSessionFromDatabaseWhenRedisMappingIsMissing() {
@@ -81,8 +89,13 @@ class InterviewSessionIdempotencyTest {
     InterviewSessionEntity entity = new InterviewSessionEntity();
     entity.setSessionId(existingSessionId);
     entity.setRequestId(requestId);
-    when(redisService.get("interview:create:result:" + requestId)).thenReturn(null);
-    when(persistenceService.findByRequestId(requestId)).thenReturn(Optional.of(entity));
+    // 幂等缓存 key 已按用户前缀隔离，这里必须与 InterviewSessionService 拼出的 key 完全一致
+    when(redisService.get(
+        "interview:create:result:" + TestAuthContext.DEFAULT_USER_ID + ":" + requestId))
+        .thenReturn(null);
+    // 归属校验闸口：当前用户拥有该会话
+    when(persistenceService.findOwnedByRequestId(requestId)).thenReturn(Optional.of(entity));
+    when(persistenceService.findOwnedBySessionId(existingSessionId)).thenReturn(Optional.of(entity));
     CachedSession cached = new CachedSession(
         existingSessionId,
         "",

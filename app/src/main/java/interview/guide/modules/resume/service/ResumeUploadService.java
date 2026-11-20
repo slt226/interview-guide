@@ -4,6 +4,7 @@ import interview.guide.common.config.AppConfigProperties;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
@@ -197,7 +198,8 @@ public class ResumeUploadService {
     }
 
     private ResumeReanalyzeSource loadReanalyzeSource(Long resumeId) {
-        ResumeEntity resume = resumeRepository.findById(resumeId)
+        // HTTP 入口：必须带归属条件，别人的简历一律当作不存在
+        ResumeEntity resume = resumeRepository.findByIdAndUserId(resumeId, CurrentUser.requireId())
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
         return new ResumeReanalyzeSource(
             resume.getOriginalFilename(),
@@ -206,6 +208,10 @@ public class ResumeUploadService {
         );
     }
 
+    /**
+     * 内部续操作：归属已在 {@link #loadReanalyzeSource(Long)} 校验过，
+     * 这里按 id 更新即可（同一个请求线程内，不做二次查库判断）。
+     */
     private void updateResumeForReanalysis(
         Long resumeId,
         String resumeText,

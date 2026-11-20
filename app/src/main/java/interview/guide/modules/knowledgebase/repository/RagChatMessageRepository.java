@@ -13,6 +13,7 @@ import java.util.Optional;
 
 /**
  * RAG聊天消息Repository
+ * 消息是子表，归属通过 session 继承，因此这里不存 user_id
  */
 @Repository
 public interface RagChatMessageRepository extends JpaRepository<RagChatMessageEntity, Long> {
@@ -30,10 +31,13 @@ public interface RagChatMessageRepository extends JpaRepository<RagChatMessageEn
     /**
      * 获取会话中最近 N 条已完成的消息（按 messageOrder 倒序取，结果需要反转为正序）
      */
-    @Query("SELECT m FROM RagChatMessageEntity m WHERE m.session.id = :sessionId AND m.completed = true ORDER BY m.messageOrder DESC")
+    @Query("SELECT m FROM RagChatMessageEntity m WHERE m.session.id = :sessionId "
+        + "AND m.completed = true ORDER BY m.messageOrder DESC")
     List<RagChatMessageEntity> findRecentCompletedBySessionId(@Param("sessionId") Long sessionId, Pageable pageable);
 
     /**
+     * 统计某个会话的消息数
+     */
     @Query("SELECT COUNT(m) FROM RagChatMessageEntity m WHERE m.session.id = :sessionId")
     Integer countBySessionId(@Param("sessionId") Long sessionId);
 
@@ -48,7 +52,10 @@ public interface RagChatMessageRepository extends JpaRepository<RagChatMessageEn
     void deleteBySessionId(Long sessionId);
 
     /**
-     * 统计所有用户消息数（即总提问次数）
+     * 统计当前用户的指定类型消息数（用于"我的提问次数"）
+     * 消息表没有 user_id，通过 session.userId 关联，避免冗余归属信息
      */
-    long countByType(MessageType type);
+    @Query("SELECT COUNT(m) FROM RagChatMessageEntity m "
+        + "WHERE m.type = :type AND m.session.userId = :userId")
+    long countByUserIdAndType(@Param("userId") Long userId, @Param("type") MessageType type);
 }

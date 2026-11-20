@@ -5,6 +5,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
@@ -66,24 +67,28 @@ public class InterviewSessionService {
             return createSessionInternal(request);
         }
 
+        // 缓存 key 必须按用户隔离：否则 B 传了和 A 相同的 requestId，会直接拿到 A 的会话
+        // （数据库侧由 (user_id, request_id) 唯一索引保证）
+        String cacheKey = CurrentUser.requireId() + ":" + requestId;
         return redisService.executeWithLock(
-            CREATE_LOCK_PREFIX + requestId,
+            CREATE_LOCK_PREFIX + cacheKey,
             185,
             600,
             TimeUnit.SECONDS,
-            () -> createIdempotentSession(request, requestId)
+            () -> createIdempotentSession(request, requestId, cacheKey)
         );
     }
 
-    private InterviewSessionDTO createIdempotentSession(CreateInterviewRequest request, String requestId) {
-        String resultKey = CREATE_RESULT_PREFIX + requestId;
+    private InterviewSessionDTO createIdempotentSession(CreateInterviewRequest request, String requestId,
+                                                        String cacheKey) {
+        String resultKey = CREATE_RESULT_PREFIX + cacheKey;
         String cachedSessionId = redisService.get(resultKey);
         if (cachedSessionId != null) {
-            log.info("复用缓存中的幂等创建请求: requestId={}, sessionId={}", requestId, cachedSessionId);
+            log.info("复用缓存中的幂等创建请求: key={}, sessionId={}", cacheKey, cachedSessionId);
             return getSession(cachedSessionId);
         }
 
-        Optional<InterviewSessionEntity> existing = persistenceService.findByRequestId(requestId);
+        Optional<InterviewSessionEntity> existing = persistenceService.findOwnedByRequestId(requestId);
         if (existing.isPresent()) {
             String existingSessionId = existing.get().getSessionId();
             log.info("从数据库恢复幂等创建请求: requestId={}, sessionId={}",
@@ -149,7 +154,7 @@ public class InterviewSessionService {
                 );
             } catch (Exception e) {
                 Optional<InterviewSessionEntity> concurrentlyCreated =
-                    persistenceService.findByRequestId(requestId);
+                    persistenceService.findOwnedByRequestId(requestId);
                 if (concurrentlyCreated.isPresent()) {
                     return getSession(concurrentlyCreated.get().getSessionId());
                 }
@@ -234,6 +239,9 @@ public class InterviewSessionService {
      * 获取会话信息（优先从缓存获取，缓存未命中则从数据库恢复）
      */
     public InterviewSessionDTO getSession(String sessionId) {
+        // 缓存里只有 sessionId，没有归属信息，所以先用数据库确认这会话是不是当前用户的
+        assertOwned(sessionId);
+
         // 1. 尝试从 Redis 缓存获取
         Optional<CachedSession> cachedOpt = sessionCache.getSession(sessionId);
         if (cachedOpt.isPresent()) {
@@ -254,6 +262,12 @@ public class InterviewSessionService {
      */
     public Optional<InterviewSessionDTO> findUnfinishedSession(Long resumeId) {
         try {
+            // resumeId 是前端传的，先确认简历属于当前用户，
+            // 否则 B 传 A 的 resumeId 就能从缓存/数据库里翻出 A 的未完成会话
+            if (!persistenceService.ownsResume(resumeId)) {
+                return Optional.empty();
+            }
+
             // 1. 先从 Redis 缓存查找
             Optional<String> cachedSessionIdOpt = sessionCache.findUnfinishedSessionId(resumeId);
             if (cachedSessionIdOpt.isPresent()) {
@@ -295,7 +309,7 @@ public class InterviewSessionService {
      */
     private CachedSession restoreSessionFromDatabase(String sessionId) {
         try {
-            Optional<InterviewSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
+            Optional<InterviewSessionEntity> entityOpt = persistenceService.findOwnedBySessionId(sessionId);
             return entityOpt.map(this::restoreSessionFromEntity).orElse(null);
         } catch (Exception e) {
             log.error("从数据库恢复会话失败: {}", e.getMessage(), e);
@@ -555,6 +569,9 @@ public class InterviewSessionService {
      * 获取或恢复会话（优先从缓存获取）
      */
     private CachedSession getOrRestoreSession(String sessionId) {
+        // 统一闸口：所有按 sessionId 的读写（取题、提交、暂存、交卷、报告）都先过归属校验
+        assertOwned(sessionId);
+
         // 1. 尝试从 Redis 缓存获取
         Optional<CachedSession> cachedOpt = sessionCache.getSession(sessionId);
         if (cachedOpt.isPresent()) {
@@ -612,6 +629,16 @@ public class InterviewSessionService {
         }
 
         return report;
+    }
+
+    /**
+     * 校验会话归属：别人的会话与不存在的会话返回同一个错误码
+     * 注意这里刻意查库而不是查缓存——缓存里没有 owner 信息
+     */
+    private void assertOwned(String sessionId) {
+        if (persistenceService.findOwnedBySessionId(sessionId).isEmpty()) {
+            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+        }
     }
 
     /**

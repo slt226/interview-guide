@@ -79,7 +79,7 @@ public class ResumeHistoryService {
      * 获取简历详情（包含分析历史）
      */
     public ResumeDetailDTO getResumeDetail(Long id) {
-        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(id);
+        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findOwnedById(id);
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }
@@ -155,7 +155,7 @@ public class ResumeHistoryService {
      * 导出简历分析报告为PDF
      */
     public ExportResult exportAnalysisPdf(Long resumeId) {
-        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(resumeId);
+        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findOwnedById(resumeId);
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }

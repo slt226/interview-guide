@@ -17,7 +17,8 @@ public final class CommonConstants {
         public static final int FORBIDDEN = 403;
         public static final int NOT_FOUND = 404;
         public static final int SERVER_ERROR = 500;
-        
+        public static final int  DEDUP_TTL_MINUTES = 30;
+        public static final String DEDUP_KEY_PREFIX = "async:dedup:";
         private StatusCode() {}
     }
     

@@ -1,6 +1,7 @@
 package interview.guide.modules.voiceinterview.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.modules.resume.repository.ResumeRepository;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
@@ -42,6 +43,8 @@ class VoiceInterviewSummaryPersistenceTest {
   private VoiceEvaluateStreamProducer evaluateStreamProducer;
   @Mock
   private LlmProviderRegistry llmProviderRegistry;
+  @Mock
+  private ResumeRepository resumeRepository;
 
   private VoiceInterviewService service;
 
@@ -54,7 +57,8 @@ class VoiceInterviewSummaryPersistenceTest {
         redissonClient,
         properties,
         evaluateStreamProducer,
-        llmProviderRegistry
+        llmProviderRegistry,
+        resumeRepository
     );
   }
 

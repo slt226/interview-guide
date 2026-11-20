@@ -17,6 +17,8 @@ import interview.guide.modules.knowledgebase.model.VectorStatus;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseQuestionRepository;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import interview.guide.infrastructure.redis.RedisService;
+import interview.guide.testsupport.TestAuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,6 +38,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.core.type.TypeReference;
 
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +55,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -89,6 +93,11 @@ class QuestionGenerationAsyncTest {
 
   @BeforeEach
   void setUp() throws Exception {
+    TestAuthContext.login();
+    // 归属校验桩：任何 kbId 都视为当前测试用户所有
+    lenient().when(knowledgeBaseRepository.findByIdAndUserId(anyLong(), anyLong()))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
+
     stateService = new QuestionGenerationStateService(
         knowledgeBaseRepository,
         questionRepository,
@@ -126,6 +135,30 @@ class QuestionGenerationAsyncTest {
         .thenReturn(List.of(new Document("知识库片段内容")));
     lenient().when(llmProviderRegistry.getPlainChatClient(nullable(String.class))).thenReturn(chatClient);
 
+    // AbstractStreamConsumer.processMessage 会先用 SET NX 占位做消费幂等，
+    // mock 默认返回 false 会被当成"重复投递"直接 ACK 跳过，导致走不到业务分支。
+    lenient().when(redisService.trySetIfAbsent(anyString(), any(), any(Duration.class))).thenReturn(true);
+  }
+
+  @AfterEach
+  void tearDown() {
+    TestAuthContext.logout();
+  }
+
+
+  /**
+   * AbstractStreamConsumer 的指标字段由 Spring 注入，单测里直接 new 出来是 null，
+   * 失败路径会 NPE。这里通过反射塞一个 mock 进去。
+   */
+  private void injectDeadLetterMetrics(QuestionGenStreamConsumer consumer) {
+    try {
+      var field = interview.guide.common.async.AbstractStreamConsumer.class
+          .getDeclaredField("deadLetterMetrics");
+      field.setAccessible(true);
+      field.set(consumer, mock(interview.guide.common.async.DeadLetterMetrics.class));
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   private void setField(Class<?> clazz, String fieldName, Object value) throws Exception {
@@ -299,6 +332,7 @@ class QuestionGenerationAsyncTest {
 
       QuestionGenStreamConsumer consumer = new QuestionGenStreamConsumer(
           redisService, failingService, stateService, questionGenStreamProducer);
+      injectDeadLetterMetrics(consumer);
       invokeProcessMessage(consumer, Map.of(
           interview.guide.common.constant.AsyncTaskStreamConstants.FIELD_KB_ID, "1",
           interview.guide.common.constant.AsyncTaskStreamConstants.FIELD_TASK_ID, "task-1",

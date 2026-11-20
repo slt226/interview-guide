@@ -1,576 +1,262 @@
 <div align="center">
 
-**智能 AI 面试官平台** - 基于大语言模型的简历分析、模拟面试和 RAG 知识库系统
+# InterviewGuide
+
+**AI 模拟面试平台 · 二次开发版**
 
 [![Java](https://img.shields.io/badge/Java-25-orange?logo=openjdk)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1-green?logo=springboot)](https://spring.io/projects/spring-boot)
+[![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0-6DB33F)](https://spring.io/projects/spring-ai)
 [![React](https://img.shields.io/badge/React-18.3-blue?logo=react)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-336791?logo=postgresql)](https://www.postgresql.org/)
-
+[![License](https://img.shields.io/badge/License-AGPL--3.0-red)](LICENSE)
 
 </div>
 
+---
+
+## 关于本仓库
+
+本仓库是 [JavaGuide 的 interview-guide](https://github.com/Snailclimb/interview-guide) 的**二次开发版本**，用于学习与求职展示。
+
+上游已经实现了完整的业务闭环（简历解析、文字/语音面试、RAG 知识库、多模型接入）。我在其基础上补齐了三个上游没有覆盖的工程方向：**认证与多租户数据隔离**、**异步任务的可靠性闭环**、**死信运维能力**，并配套改造了前端。
+
+> 这里刻意把「上游能力」和「本人新增」分开写。不是为了显得谦虚，而是因为**能说清楚哪些是自己做的、边界在哪，比把整个项目说成自己写的更经得起追问**。
+
+## 与上游的差异
+
+| 能力 | 上游 | 本仓库 |
+|---|---|---|
+| 认证鉴权 | 无（所有接口裸奔） | Spring Security + JWT 无状态认证，接口全量上锁 |
+| 数据归属 | 无（登录后能读任意用户数据） | 5 张根表引入 `user_id`，子表外键继承，全链路归属校验 |
+| 异步幂等 | 无并发保护 | `SET NX` 幂等占位 + 状态机原子领取 |
+| 失败任务处理 | 仅日志 | 死信表归档 + 管理页重投 + 定时恢复 |
+| 异步可观测性 | 无 | 4 个 Prometheus 指标 |
+| 唯一约束 | 全局唯一 | 降级为租户内唯一（`user_id, file_hash`） |
+| 前端 | 无登录 | 登录页 + 路由守卫 + 401 自动跳转 + 死信管理页 |
 
 ---
 
-## 项目介绍
+## 一、我做了什么
 
-InterviewGuide 是一个集成了简历分析、模拟面试（文字 + 语音）、面试安排、知识库管理、知识库题库面试和多模型配置的智能面试辅助平台。系统利用大语言模型（LLM）、向量数据库、Redis Stream 异步任务和实时语音技术，为求职者、HR 和培训机构提供智能化的简历评估、面试练习、知识库问答和面试日程管理能力。
+### 1.1 认证体系（`modules/auth`）
 
-## 系统架构
+- **JWT 无状态认证**：HS256 签发，`subject` 存 userId，自定义 `username` claim 省一次查库；密钥长度不足 32 字节直接启动失败，避免上线后才发现签名弱。
+- **自定义过滤器**：`JwtAuthenticationFilter extends OncePerRequestFilter`，验签成功才写入 `SecurityContext`；`SessionCreationPolicy.STATELESS`，服务端不存会话。
+- **统一入口**：`CurrentUser.requireId()` 封装取当前用户的逻辑，业务代码不直接碰 Spring Security 的 API。
+- **401 必须自己写 JSON**：Spring Security 默认 401 是空 body，前端解析出 `undefined` 只能报「网络错误」，因此通过 `authenticationEntryPoint` 手写 `{"code":401,...}`。
+- **WebSocket 单独处理**：浏览器不允许给 WS 握手设置请求头，token 只能走 query 参数，由 `JwtHandshakeInterceptor` 验签后塞进 `session.getAttributes()`。
 
-![系统架构图](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/interview-guide-architecture-diagram.png)
+### 1.2 多租户数据隔离
 
-## 配套教程
+**核心认知：认证只解决「你是谁」，不解决「数据属于谁」。**
 
-本项目承诺**完整功能免费开源**，也不会做所谓的 Pro 版或“付费解锁核心功能”之类的设计。
+- 迁移 `V20261110__add_user_id_for_data_isolation.sql`：`resumes`、`knowledge_bases`、`interview_sessions`、`rag_chat_session`、`interview_schedule` 五张根表加 `user_id bigint NOT NULL`，子表通过外键继承归属，不重复加列。
+- **唯一键必须降级**：`(file_hash)` → `(user_id, file_hash)`、`(request_id)` → `(user_id, request_id)`。只改代码不改索引，B 传同一个文件就会撞 A 的记录。
+- **防御性 404**：别人的资源与不存在的资源返回**完全一样**的错误码。如果「无权访问」单独报一个码，攻击者能通过错误码差异枚举出哪些 ID 真实存在。
+- **幂等 key 必须带用户前缀**：Redis key 使用 `userId:requestId`，DB 查询用 `findOwnedByRequestId`。只改数据库唯一索引、不改 Redis key，照样越权。
+- **异步消费者刻意不过滤**：消费者是系统身份、没有登录态，一刀切全加 `user_id` 会导致异步任务永远查不到数据。边界是：**用户发起的入口必须过滤，系统内部的处理不过滤。**
 
-如果你想学习这个项目，或者希望把它作为个人项目经历 / 毕设选题，我也整理了一套相对细致的教程：从基础设施搭建、核心业务实现，到最后如何在面试中讲清楚思路与亮点，尽量把容易卡住的地方讲透。
+### 1.3 异步任务可靠性（`common/async`）
 
-如果你确实需要更系统的辅导，可以点这里了解详情（**教程为付费内容**，主要是想覆盖一些时间成本，望理解，感谢支持）：[《SpringAI 智能面试平台+RAG 知识库》](https://javaguide.cn/zhuanlan/interview-guide.html)。
+**核心论点：Redis Stream 是 at-least-once 语义，叠加 XAUTOCLAIM 对超时未 ACK 消息的重投，重复消费是必然事件，不是概率事件。一次语音评估约 ¥0.26，重复执行就是真实的钱。**
 
-## 技术栈
+| 层 | 机制 | 解决什么 |
+|---|---|---|
+| 1 回收 | `XAUTOCLAIM`，pending 超 5 分钟重新认领 | 消费者进程崩溃，消息卡在 pending 无人处理 |
+| 2 重试 | 最多 3 次，指数退避 | 大模型偶发超时、网络抖动 |
+| 3 兜底 | 重试耗尽 → 标记业务失败 + 写死信表 | 永久失败不阻塞队列，且不丢现场 |
+| 4 恢复 | 定时扫描 QUEUED>2min / PROCESSING>20min | 投递成功但无人消费的僵尸任务 |
+| 5 幂等 | `SET NX` 占位 + 状态机原子领取 | 重复投递导致重复调大模型 → 重复计费 |
 
-### 后端技术
+已知缺陷（主动记录，不是隐藏）：幂等键在失败时需主动删除，否则重试会被自己挡住；而「删除」本身不是原子操作，极端情况下仍有窗口。更严谨的做法是分布式锁 + 业务表唯一键双保险。
 
-| 技术                  | 版本  | 说明                          |
-| --------------------- | ----- | ----------------------------- |
-| Spring Boot           | 4.1.0 | 应用框架                      |
-| Java                  | 25    | 开发语言（虚拟线程）          |
-| Spring AI             | 2.0.0 | AI 集成框架、OpenAI 兼容模型接入 |
-| Spring AI Agent Utils | 0.10.0 | Skill 资源加载、Advisor 能力扩展 |
-| PostgreSQL + pgvector | 14+   | 关系数据库 + 向量存储（Compose 默认 PG16） |
-| Redis + Redisson      | 6+ / 4.0.0 | 缓存 + 消息队列（Stream） |
-| Apache Tika           | 2.9.2 | 文档解析                      |
-| iText 8               | 8.0.5 | PDF 导出                      |
-| MapStruct             | 1.6.3 | 对象映射                      |
-| SpringDoc OpenAPI     | 3.0.2 | API 接口文档                  |
-| DashScope SDK         | 2.22.7 | 语音识别/合成（Qwen3 ASR/TTS）|
-| AWS S3 SDK            | 2.29.51 | S3 兼容对象存储（MinIO/RustFS）|
-| WebSocket             | -     | 语音面试实时双向通信          |
-| Gradle                | 9.6.1 | 构建工具                      |
-
-技术选型常见问题解答：
-
-1. 数据存储为什么选择 PostgreSQL + pgvector？PG 的向量数据存储功能够用了，精简架构，不想引入太多组件。
-2. 为什么引入 Redis？
-   - Redis 替代 `ConcurrentHashMap` 实现面试会话的缓存。
-   - 基于 Redis Stream 实现简历分析、知识库向量化等场景的异步（还能解耦，分析和向量化可以使用其他编程语言来做）。不使用 [Kafka](https://javaguide.cn/high-performance/message-queue/kafka-questions-01.html) 这类成熟的消息队列，也是不想引入太多组件。
-3. 构建工具为什么选择 Gradle？个人更喜欢用 Gradle，也写过相关的文章：[Gradle核心概念总结](https://javaguide.cn/tools/gradle/gradle-core-concepts.html)。
-
-### 前端技术
-
-| 技术              | 版本  | 说明           |
-| ----------------- | ----- | -------------- |
-| React             | 18.3  | UI 框架        |
-| TypeScript        | 5.6   | 开发语言       |
-| Vite              | 5.4   | 构建工具       |
-| Tailwind CSS      | 4.1   | 样式框架       |
-| React Router      | 7.11  | 路由管理       |
-| Framer Motion     | 12.23 | 动画库         |
-| Recharts          | 3.6   | 图表库         |
-| Lucide React      | 0.468 | 图标库         |
-| React Big Calendar| 1.19  | 面试日历组件   |
-| React Virtuoso    | 4.18  | RAG 聊天虚拟列表 |
-| pnpm              | 10.26 | 前端包管理器   |
+**死信闭环**：死信表 + 分页查询接口 + 前端管理页 + 手动重投。重投会重新投递到原 Stream，而不是直接执行业务逻辑。
 
-## 功能特性
+### 1.4 可观测性
 
-### 简历管理模块
+`/actuator/prometheus` 暴露：
 
-- **多格式解析**：支持 PDF、DOCX、DOC、TXT 等多种简历格式。
-- **异步处理流**：基于 Redis Stream 实现异步简历分析，支持实时查看处理进度（待分析/分析中/已完成/失败）。
-- **稳定性保障**：内置分析失败自动重试机制（最多 3 次）与基于内容哈希的重复检测。
-- **分析报告导出**：支持将 AI 分析结果一键导出为结构化的 PDF 简历分析报告。
+| 指标 | 含义 |
+|---|---|
+| `app.async.idempotency.hits` | 幂等拦截次数 |
+| `app.async.dead_letter.archived` | 死信归档数 |
+| `app.async.dead_letter.replayed` | 死信重投次数 |
+| `app.async.dead_letter.pending` | 当前待处理死信数 |
 
-### 模拟面试模块
+> 命名踩过的坑：**不要用 `_created` / `_total` / `_count` 这类 Prometheus 保留后缀**，Micrometer 会剥离或改写（实测 `_created` 被改写成 `_total`）。
 
-- **Skill 驱动出题**：内置 10+ 面试方向（Java 后端、阿里/字节/腾讯专项、前端、Python、算法、系统设计、测开、AI Agent 等），每个方向由 `SKILL.md` 定义考察范围、难度分布和参考知识库。
-- **历史题目去重**：出题时自动排除已有会话中问过的题目，避免重复考察。
-- **面试阶段时长联动**：总时长滑块拖动后，各阶段（自我介绍、技术考察、项目深挖、反问环节）按时比自动分配。
-- **智能追问流**：支持配置多轮智能追问（默认 1 条），模拟多轮问答场景。
-- **统一评估架构**：文字面试和语音面试共用同一套评估引擎（分批评估 + 结构化输出 + 二次汇总 + 降级兜底），评估结果可对比。
-- **报告一键导出**：支持异步生成并导出详细的 PDF 模拟面试评估报告。
-- **面试中心入口**：面试中心页整合文字面试和语音面试入口，支持继续面试和重新面试。
+### 1.5 改造规模
 
-### 面试安排模块
+| 项 | 数量 |
+|---|---|
+| 改动文件 | 79 个 |
+| 新增代码 | 1649 行 / 删除 458 行 |
+| 新增 Java 类 | 20 个 |
+| 新增前端模块 | 9 个（登录页、死信页、路由守卫、API、类型） |
+| 新增迁移脚本 | 3 个 |
+| 单元测试 | 310 个（全绿，46 个集成测试按外部依赖跳过） |
 
-- **邀请解析**：规则 + AI 双引擎，支持飞书/腾讯会议/Zoom 格式，自动提取公司、岗位、时间、会议链接
-- **日历管理**：日/周/月视图 + 拖拽调整 + 列表视图
-- **状态流转**：定时任务自动过期，手动标记待面试/已完成/已取消
-- **面试提醒**：可配置提醒，避免错过面试
+---
 
-### 语音面试模块
+## 二、上游已有能力（非本人实现）
 
-实时语音对话面试，WebSocket + 千问3 语音模型（ASR/TTS/LLM 统一 API Key）：
+以下为上游 interview-guide 的原生能力，本仓库保留未改或仅做适配：
 
-- **实时流式对话**：句子级并发 TTS，边生成边合成边播放，首包延迟 200ms
-- **服务端 VAD**：自动断句，实时字幕（含中间结果）
-- **回声防护 + 手动提交**：避免 AI 语音被误录入
-- **多轮上下文记忆 + 暂停/恢复**：超时自动暂停
-- **Micrometer 埋点**：TTS/ASR 延迟、会话时长等指标
+| 模块 | 能力 |
+|---|---|
+| 简历管理 | PDF/DOCX/TXT 解析、异步 AI 分析、内容哈希去重、PDF 报告导出 |
+| 文字面试 | Skill 驱动出题（11 套岗位技能包）、智能追问、分批评估、报告导出 |
+| 语音面试 | WebSocket + 千问3 ASR/TTS、服务端 VAD 断句、句子级并发 TTS |
+| 知识库 | 文档分块、1024 维向量化、pgvector HNSW 检索、查询改写、SSE 流式问答 |
+| 知识库题库 | 从文档生成题目、容量校验、专项面试、评估闭环 |
+| 面试日程 | 飞书/腾讯会议/Zoom 邀请解析、日历视图、状态流转 |
+| 多模型 | DashScope / Kimi / DeepSeek / GLM / LM Studio 热切换，API Key AES-GCM 加密 |
+| 限流 | `@RateLimit` 可重复注解，Global / IP / User 三维度，Redis Lua 原子计数 |
 
-> **已知问题**：端到端延迟偏高（服务端音频中转）、无耳机时回声泄漏、TTS 音色单一、弱网音频断续。后续计划探索 WebRTC、客户端 VAD 降噪、端到端语音模型等方案。
+---
 
-### 知识库管理模块
+## 三、技术栈
 
-- **文档智能处理**：支持 PDF、DOCX、Markdown 等多种格式文档的自动上传、分块与异步向量化。
-- **RAG 检索增强**：集成 pgvector，通过查询改写、相似度阈值和 TopK 策略提升 AI 问答的准确性与专业度。
-- **流式响应交互**：基于 SSE（Server-Sent Events）技术实现打字机式流式响应。
-- **智能问答对话**：支持会话管理、置顶、多知识库关联、Markdown 展示和虚拟列表渲染。
-- **知识库运维**：支持分类管理、下载、重新向量化、搜索和统计信息展示。
+| 层 | 选型 |
+|---|---|
+| 语言 / 框架 | Java 25（虚拟线程）· Spring Boot 4.1 · Spring AI 2.0 |
+| 数据库 | PostgreSQL 16 + pgvector（1024 维，HNSW，COSINE） |
+| 缓存 / 消息 | Redis 6+ · Redisson · Redis Stream |
+| 对象存储 | S3 兼容（开发用 RustFS，部署用 MinIO） |
+| 文档解析 / 导出 | Apache Tika · iText 8 |
+| 认证 | Spring Security · JJWT（HS256）· BCrypt |
+| 迁移 / 文档 | Flyway（8 个版本脚本）· SpringDoc OpenAPI |
+| 前端 | React 18 · TypeScript 5.6 · Vite · Tailwind CSS 4 |
 
-### 知识库题库与面试模块
+---
 
-- **基于知识库生成题目**：从已向量化文档生成主问题、参考答案、关键点、评分标准和追问，并按方向与难度组织题库。
-- **异步生成与质量提示**：题目生成任务通过 Redis Stream 异步执行；生成不足时保留草稿，并展示实际追问数与目标追问数，避免静默丢失题目。
-- **完整题库维护**：支持题目搜索、筛选、分页、手动新增、编辑、删除，以及草稿、已启用、已归档状态的单题或批量管理。
-- **严格面试容量校验**：开始面试前按方向、难度、主问题数和每题追问数实时计算可用容量；追问数量是硬约束，容量不足的选项会直接禁用，后端同时进行兜底校验。
-- **知识库专项面试**：从已启用题目中抽取主问题和追问，完整记录作答过程，并复用统一评估引擎异步生成总分、逐题评价、优势和改进建议。
-- **评估与记录闭环**：交卷后展示评估进度，完成后自动进入本次面试详情；支持方向、时间、完成状态筛选、表现趋势统计和 PDF 报告导出。
+## 四、快速开始
 
-### 多模型与系统设置模块
+### 环境要求
 
-- **多 Provider 管理**：内置 DashScope、LM Studio、Kimi、DeepSeek、GLM 等 OpenAI 兼容 Provider 配置。
-- **默认模型切换**：支持在设置页切换默认聊天模型和默认向量模型，不需要频繁修改源码配置。
-- **语音服务配置**：ASR/TTS 配置可视化管理，支持语音服务连通性测试。
-- **配置安全落盘**：运行时配置默认写入用户目录 `~/.interview-guide/`，支持 API Key 加密配置。
-
-### TODO
-
-- [x] 问答助手的 Markdown 展示优化
-- [x] 知识库管理页面的知识库下载
-- [x] 异步生成模拟面试评估报告
-- [x] Docker 快速部署
-- [x] 添加 API 限流保护
-- [x] 前端性能优化（RAG 聊天 - 虚拟列表）
-- [x] 模拟面试增加追问功能
-- [x] 语音面试功能（基于 Qwen3 实时语音模型）
-- [x] 面试安排管理（智能解析 + 日历视图）
-- [x] Skill 驱动出题（10+ 面试方向 + 参考知识库）
-- [x] 统一面试评估架构（文字/语音共用评估引擎）
-- [x] 面试历史题目去重
-- [x] 面试中心页（整合文字/语音入口）
-- [x] 语音面试 LLM 流式输出 + 句子级并发 TTS
-- [x] 语音面试暂停/恢复 + 手动提交 + 回声防护
-- [x] 多 LLM Provider 管理与默认模型切换
-- [x] RAG 聊天会话管理 + 虚拟列表优化
-- [x] 可重复注解 API 限流（Global/IP/User 维度）
-- [x] 打通知识库题库与模拟面试（异步出题、严格容量校验、统一评估与记录）
-- [ ] 语音面试接入 WebRTC 降低延迟
-- [ ] 语音面试支持更多 TTS 音色
-
-
-## 效果展示
-
-### 简历与面试
-
-面试中心：
-
-![面试中心](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-interview-hub.png)
-
-Skill 出题 + JD 解析：
-
-![Skill 出题 + JD 解析](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-skill-jd-parse.png)
-
-简历库：
-
-![简历库](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-resume-history.png)
-
-简历上传分析：
-
-![简历上传分析](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-resume-upload-analysis.png)
-
-简历分析详情：
-
-![简历分析详情](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-resume-analysis-detail.png)
-
-面试记录：
-
-![面试记录](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-interview-history.png)
-
-面试详情：
-
-![面试详情](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-interview-detail.png)
-
-模拟面试：
-
-![模拟面试](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-mock-interview.png)
-
-面试安排
-
-![面试安排](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-interview-schedule-list.png)
-
-多模型切换 + 语音服务设置：
-
-![管理聊天模型、向量模型和模块配置](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/llm-settings.png)
-
-
-### 知识库
-
-知识库管理：
-
-![知识库管理](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-knowledge-base-management.png)
-
-问答助手：
-
-![问答助手](https://oss.javaguide.cn/xingqiu/pratical-project/interview-guide/page-qa-assistant.png)
-
-## 项目结构
-
-```
-interview-guide/
-├── app/                              # 后端应用
-│   ├── src/main/java/interview/guide/
-│   │   ├── App.java                  # 主启动类
-│   │   ├── common/                   # 通用基础能力
-│   │   │   ├── ai/                   # LLM Provider、结构化输出、Prompt 安全
-│   │   │   ├── annotation/           # @RateLimit 可重复限流注解
-│   │   │   ├── aspect/               # RateLimitAspect + Redis Lua 限流
-│   │   │   ├── async/                # Redis Stream 生产者/消费者模板
-│   │   │   ├── config/               # CORS、S3、OpenAPI、Jackson 等配置
-│   │   │   ├── evaluation/           # 文字/语音共用的统一评估引擎
-│   │   │   ├── exception/            # 业务异常与全局异常处理
-│   │   │   └── result/               # 统一响应 Result<T>
-│   │   ├── infrastructure/           # 基础设施
-│   │   │   ├── export/               # PDF 导出
-│   │   │   ├── file/                 # 文件解析、校验、清洗、S3 存储
-│   │   │   ├── mapper/               # MapStruct 映射器
-│   │   │   └── redis/                # RedisService、面试会话缓存
-│   │   └── modules/                  # 业务模块
-│   │       ├── interview/            # 模拟面试模块
-│   │       ├── interviewschedule/    # 面试安排模块
-│   │       ├── knowledgebase/        # 知识库模块
-│   │       ├── llmprovider/          # 多模型 Provider 与语音配置
-│   │       ├── resume/               # 简历模块
-│   │       └── voiceinterview/       # 语音面试模块
-│   └── src/main/resources/
-│       ├── application.yml           # 应用配置
-│       ├── prompts/                  # AI 提示词模板（StringTemplate）
-│       ├── scripts/                  # Redis Lua 脚本
-│       ├── skills/                   # 面试 Skill 定义和参考题库
-│       └── voice-interview-opening.yml # 语音面试开场白配置
-│
-├── frontend/                         # 前端应用
-│   ├── src/
-│   │   ├── api/                      # API 接口
-│   │   ├── components/               # 公共组件
-│   │   ├── hooks/                    # 业务 Hooks
-│   │   ├── pages/                    # 页面组件
-│   │   ├── types/                    # 类型定义
-│   │   └── utils/                    # 工具函数
-│   ├── package.json
-│   └── vite.config.ts
-│
-├── docker-compose.yml                # 完整部署：前端 + 后端 + PostgreSQL + Redis + MinIO
-├── docker-compose.dev.yml            # 本地开发依赖：PostgreSQL + Redis + RustFS
-├── docs/                             # 架构设计与改造记录
-├── .env.example                      # 环境变量示例
-└── README.md
-```
-
-## 快速开始
-
-环境要求：
-
-| 依赖          | 版本 | 必需 | 说明                                     |
-| ------------- | ---- | ---- | ---------------------------------------- |
-| JDK           | 25   | 是   | 开发语言                                 |
-| Node.js       | 18+  | 是   | 前端构建                                 |
-| pnpm          | 10+  | 推荐 | 前端包管理器（项目 packageManager 指定 10.26）|
-| Docker        | -    | 推荐 | 一键启动依赖服务（PostgreSQL/Redis/RustFS）|
-
-> 如果不用 Docker，需要自行安装 PostgreSQL 14+（含 pgvector 扩展）、Redis 6+ 和 S3 兼容存储。
-
-### 1. 克隆项目
+| 依赖 | 版本 | 说明 |
+|---|---|---|
+| JDK | 25 | 必需 |
+| Node.js | 18+ | 前端构建 |
+| pnpm | 10+ | 前端包管理器 |
+| Docker | - | 推荐，一键起依赖服务 |
+
+### 1. 克隆
 
 ```bash
-git clone https://github.com/Snailclimb/interview-guide.git
+git clone https://github.com/slt226/interview-guide.git
 cd interview-guide
 ```
 
 ### 2. 配置环境变量
 
-推荐复制 `.env.example` 为 `.env`，后端 `bootRun` 会自动读取根目录 `.env`。最少需要填写 `AI_BAILIAN_API_KEY`，用于 DashScope 文本模型、ASR 和 TTS：
-
 ```bash
 cp .env.example .env
-
-# 编辑 .env
-# AI_BAILIAN_API_KEY=your_dashscope_api_key
-# AI_MODEL=qwen3.5-flash
 ```
 
-如果你更习惯通过 shell 环境变量注入，也可以这样设置：
+最少需要填写两项：
 
-```bash
-# macOS / Linux（zsh）
-echo 'export AI_BAILIAN_API_KEY=your_api_key' >> ~/.zshrc
-source ~/.zshrc
-
-# Linux（bash）
-echo 'export AI_BAILIAN_API_KEY=your_api_key' >> ~/.bashrc
-source ~/.bashrc
+```ini
+AI_BAILIAN_API_KEY=your_dashscope_api_key
+APP_AI_CONFIG_ENCRYPTION_KEY=your_random_long_secret
 ```
 
-### 3. 启动依赖服务（可选）
+- `AI_BAILIAN_API_KEY`：[阿里云百炼](https://bailian.console.aliyun.com/)申请，文本模型与 ASR/TTS 共用。
+- `APP_AI_CONFIG_ENCRYPTION_KEY`：AES-GCM 加密 API Key 落库用的主密钥。**一旦更换，历史密文全部无法解密**，需用旧密钥解密后重新加密迁移。
 
-项目提供了 `docker-compose.dev.yml`，可一键启动 PostgreSQL、Redis、RustFS（S3 兼容存储）三个依赖：
+> 注意：运行时 Provider 配置从**数据库**读取，改 `.env` 只影响首次初始化。已启动过的实例要换 Key，请在设置页修改或直接改库。
+
+### 3. 启动依赖服务
 
 ```bash
-# 启动依赖服务
 docker compose -f docker-compose.dev.yml up -d
-
-# 停止依赖服务
-docker compose -f docker-compose.dev.yml down
-
-# 停止并清除数据
-docker compose -f docker-compose.dev.yml down -v
 ```
 
-如果你之前已经启动过旧版本容器，拉取新代码后建议确认端口映射是否真的生效：
+| 服务 | 地址 | 账号 |
+|---|---|---|
+| PostgreSQL | `localhost:5432` | `postgres` / `123456` |
+| Redis | `localhost:6379` | - |
+| RustFS 控制台 | `localhost:9001` | `rustfsadmin` / `rustfsadmin` |
 
-```bash
-docker ps --format '{{.Names}} {{.Ports}}'
-```
-
-正常情况下应看到：
-
-```text
-interview-postgres 0.0.0.0:5432->5432/tcp
-interview-redis    0.0.0.0:6379->6379/tcp
-```
-
-如果只看到 `interview-postgres 5432/tcp` 或 `interview-redis 6379/tcp`，说明容器内部服务是启动的，但端口没有发布到宿主机。此时通过 `./gradlew :app:bootRun` 从宿主机启动后端，会出现类似 `Connection to localhost:5432 refused` 的报错。可以重建容器配置（不会删除 Docker volume 中的数据）：
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --force-recreate postgres redis
-```
-
-启动后默认账号：
-
-| 服务         | 地址             | 账号            | 密码            |
-| ------------ | ---------------- | --------------- | --------------- |
-| PostgreSQL   | `localhost:5432` | `postgres`      | `123456`        |
-| Redis        | `localhost:6379` | -               | -               |
-| RustFS 控制台 | `localhost:9001` | `rustfsadmin`   | `rustfsadmin`   |
-
-> **注意**：应用启动时会自动检查并创建 `interview-guide` Bucket。使用 `docker-compose.dev.yml` + `:app:bootRun` 时，请确保 `.env` 中的 `APP_STORAGE_ACCESS_KEY` / `APP_STORAGE_SECRET_KEY` 与 RustFS 账号一致，例如都设为 `rustfsadmin`。如果本地已有 MinIO 或其他 S3 兼容存储，也可以直接使用，在 `.env` 中修改 `APP_STORAGE_*` 配置即可。
-
-> **IDEA Docker Debug 提示**：如果在 macOS 上使用 IntelliJ IDEA 的 Docker 调试方式启动后端，遇到 `mounts denied: The path /Applications/IntelliJ IDEA.app/Contents/lib is not shared from the host`，请在 Docker Desktop 的 `Settings -> Resources -> File Sharing` 中加入 `/Applications/IntelliJ IDEA.app/Contents/lib`（或整个 `/Applications/IntelliJ IDEA.app`）以及当前项目目录，然后重启 Docker/IDEA 后再运行。普通 `./gradlew :app:bootRun` 和 `docker compose` 启动不需要这个额外共享路径。
+Bucket 由应用启动时自动创建（`storage.auto-create-bucket: true`），无需手动建。
 
 ### 4. 启动应用
 
-**后端：**
+```bash
+# 后端（会自动执行 Flyway 迁移）
+./gradlew.bat :app:bootRun        # Windows
+./gradlew :app:bootRun            # macOS / Linux
+
+# 前端
+cd frontend && pnpm install && pnpm dev
+```
+
+| 服务 | 地址 |
+|---|---|
+| 前端 | http://localhost:5173 |
+| 后端 | http://localhost:8080 |
+| 接口文档 | http://localhost:8080/swagger-ui.html |
+
+> **在 IDEA 里直接 Run `App.main()` 会启动失败**：根目录 `.env` 只被 Gradle 的 `bootRun` 任务注入。请在 IDEA 中新建 **Gradle** 类型运行配置，Task 填 `:app:bootRun`。
+
+### 5. 首次使用
+
+1. 打开 http://localhost:5173 ，进入登录页注册账号（密码 BCrypt 加密存储）。
+2. 登录后进入设置页，确认 Provider 与 Key 可用（点「测试连接」会发真实请求）。
+3. 上传一份简历 → 等待异步分析完成 → 开始面试。
+
+---
+
+## 五、测试
 
 ```bash
-./gradlew :app:bootRun
+./gradlew :app:test --no-daemon
 ```
 
-后端服务启动于 `http://localhost:8080`
+| 项 | 数值 |
+|---|---|
+| 用例总数 | 310 |
+| 失败 | 0 |
+| 跳过 | 46（依赖外部服务的集成测试） |
 
-**前端：**
+写单测踩过的坑，记在这里省得后人再踩：
 
-```bash
-cd frontend
-corepack enable
-pnpm install
-pnpm dev
-```
+- **纯 Mockito 测试没有过滤器链**，`SecurityContextHolder` 为空，加了 `CurrentUser.requireId()` 后所有用例齐刷刷报 401。解决方式是 `TestAuthContext.login(1L)` 在 `@BeforeEach` 手动注入上下文。
+- **`processMessage` 有 SET NX 消费幂等**，mock 默认返回 `false` 会被当成重复投递直接 ACK，表现为 `verify` 报「zero interactions」。setUp 里要桩 `trySetIfAbsent(...) → true`。
 
-前端服务启动于 `http://localhost:5173`
+---
 
+## 六、已知问题与后续计划
 
-## Docker 快速部署
+**已知问题**
 
-本项目提供了完整的 Docker 支持，可以一键启动所有服务（前后端、数据库、中间件）。
+- JWT 无 refresh 机制、无黑名单，token 到期前无法主动失效（删除账号后旧 token 仍可用至过期）。
+- 登录接口没有失败次数限制，可被暴力尝试（限流目前只挂在知识库问答上）。
+- 错误码风格未统一：知识库详情返回 `6001`，问答接口返回 `404`，安全上等价但不够一致。
+- RAG 未做 rerank，数据量增大后召回质量会下降。
 
-Docker Compose 编排了 6 个服务：PostgreSQL（pgvector）、Redis、MinIO（S3 兼容存储）、MinIO Bucket 初始化、Spring Boot 后端、React 前端（Nginx）。数据通过 Docker 命名卷持久化，`docker-compose down` 不会丢失数据。
+**后续计划**
 
-### 1. 前置准备
+- [ ] 引入 Redis 黑名单 / refresh token，支持主动登出
+- [ ] 登录接口接入限流与失败锁定
+- [ ] RAG 增加 rerank 阶段
+- [ ] 异步框架的幂等键改为「分布式锁 + 业务唯一键」双保险
+- [ ] 补充 CI 与压测（当前只有单测）
 
-- 安装 [Docker](https://www.docker.com/products/docker-desktop/) 和 Docker Compose
-- 申请阿里云百炼 API Key（用于 AI 对话功能，申请地址：<https://bailian.console.aliyun.com/>）
+---
 
-### 2. 快速启动
+## 七、效果展示
 
-在项目根目录下执行：
+建议自行截图补充。**不要直接引用上游仓库的截图**，那是他人的演示环境，放在自己的仓库里既容易失效也不合适。
 
-`.env.example` 中的 PostgreSQL、Redis、MinIO 已与 `docker-compose.yml` 对齐（数据库用户 `postgres` / 密码 `password`，MinIO `minioadmin` / `minioadmin`）。复制为 `.env` 后主要填写 `AI_BAILIAN_API_KEY`；若你曾在旧版本中使用过不同的库密码或对象存储密钥，请同步修改 `.env`，必要时重建 Postgres 卷以免旧数据与密码不一致。
+建议至少补三张：登录页、面试进行中、死信管理页。
 
-```bash
-# 1. 复制环境变量配置文件
-cp .env.example .env
+---
 
-# 2. 编辑 .env 文件，填入 AI 配置
-# vim .env
-# 必填：AI_BAILIAN_API_KEY=your_key_here
-# 必填：APP_AI_CONFIG_ENCRYPTION_KEY=your_random_long_secret
-# 可选：AI_MODEL=qwen3.5-flash   # 默认值为 qwen3.5-flash
-# 也可以在设置页维护 DashScope、Kimi、DeepSeek、GLM、LM Studio 等 Provider
-#
-# 面试参数配置（可选）：
-# APP_INTERVIEW_FOLLOW_UP_COUNT=1         # 每个主问题生成追问数量（默认 1）
-# APP_INTERVIEW_EVALUATION_BATCH_SIZE=8   # 回答评估分批大小（默认 8）
+## 八、致谢与许可
 
-# 3. 构建并启动所有服务
-docker-compose up -d --build
-```
+- 上游项目：[Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide)，本项目基于其 AGPL-3.0 许可二次开发。
+- 本仓库新增代码同样遵循 **AGPL-3.0**：只要通过网络提供服务，就必须向用户公开修改后的源码。
 
-> **仅启动依赖服务**：如果只想本地开发调试（用 `./gradlew :app:bootRun` 启动后端），可以只启动基础设施：`docker compose up -d postgres redis minio createbuckets`。将 `.env.example` 复制为 `.env` 并填写 `AI_BAILIAN_API_KEY` 即可，默认账号与 `docker-compose.yml` 一致；Bucket 会由初始化任务或应用启动检查自动创建。
-
-### 3. 服务访问
-
-启动完成后，您可以通过以下地址访问各个服务：
-
-| 服务             | 地址                                           | 默认账号     | 默认密码     | 说明                   |
-| ---------------- | ---------------------------------------------- | ------------ | ------------ | ---------------------- |
-| **前端应用**     | [http://localhost](http://localhost)           | -            | -            | 用户访问入口           |
-| **后端 API**     | [http://localhost:8080](http://localhost:8080) | -            | -            | RESTful API            |
-| **接口文档**     | [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html) | - | - | SpringDoc/Swagger UI |
-| **MinIO 控制台** | [http://localhost:9001](http://localhost:9001) | `minioadmin` | `minioadmin` | 对象存储管理           |
-| **MinIO API**    | `localhost:9000`                               | -            | -            | S3 兼容接口            |
-| **PostgreSQL**   | `localhost:5432`                               | `postgres`   | `password`   | 数据库 (包含 pgvector) |
-| **Redis**        | `localhost:6379`                               | -            | -            | 缓存与消息队列         |
-
-### 4. 常用运维命令
-
-```bash
-# 查看服务状态
-docker-compose ps
-
-# 查看后端日志
-docker-compose logs -f app
-
-# 拉取新代码后重新构建部署
-docker-compose up -d --build
-
-# 停止并移除所有服务（数据保留在 Docker 卷中）
-docker-compose down
-
-# 停止服务并清除数据卷（慎用，会删除数据库和文件）
-docker-compose down -v
-
-# 清理无用镜像（构建产生的中间层）
-docker image prune -f
-```
-
-## 使用场景
-
-| 用户角色        | 使用场景                               |
-| --------------- | -------------------------------------- |
-| **求职者**      | 上传简历获取分析建议，进行模拟面试练习 |
-| **HR/招聘人员** | 批量分析简历，评估候选人能力           |
-| **培训机构**    | 提供面试培训服务，管理知识库资源       |
-
-## 常见问题
-
-### Q: 数据库表创建失败/数据丢失
-
-本地开发首先检查 JPA 的 `ddl-auto` 配置。`ddl-auto` 模式对比：
-
-| 模式     | 行为                            | 适用场景      | 数据保留 |
-| -------- | ------------------------------- | ------------- | -------- |
-| update   | 表不存在自动创建，存在则尝试增量更新 | 早期开发或临时实验，当前项目不推荐 | ✅ 保留 |
-| create   | 无条件删除并重建所有表          | 仅首次建表时使用 | ❌ 删除 |
-| **validate** | 只验证，不修改                  | **当前项目默认推荐，建表和变更交给 Flyway** | ✅ 保留 |
-| none     | 什么都不做                      | 生产环境      | ✅ 保留 |
-
-**推荐配置（已默认）**：
-
-```yaml
-jpa:
-  hibernate:
-    ddl-auto: validate  # 只校验 schema，建表和变更交给 Flyway
-```
-
-⚠️ **注意**：避免使用 `create` 模式，否则每次重启都会删除所有数据！
-
-### Q: 知识库向量化失败
-
-`vector_store` 表已由 Flyway 创建，Spring AI 不再自动建表。
-
-```java
-spring:
-  ai:
-    vectorstore:
-      pgvector:
-        initialize-schema: false
-
-```
-
-建议保持为 false，避免应用启动时绕过 Flyway 修改数据库 schema。
-
-### Q: 数据库迁移需要手动执行脚本吗？
-
-不需要。数据库 schema 已接入 Flyway，后端应用启动时会自动执行 `app/src/main/resources/db/migration/` 下的迁移，并记录到 `flyway_schema_history`。
-
-当前项目通过 `V1__init_schema.sql` 支持空库初始化，后续版本通过增量迁移演进；Hibernate `ddl-auto` 只做 `validate` 校验。测试环境使用 H2，默认关闭 Flyway。
-
-### Q: 启动时报 `Connection to localhost:5432 refused` 怎么办？
-
-这通常不是 Flyway 脚本错误，而是后端从宿主机访问不到 PostgreSQL。先确认依赖容器已启动：
-
-```bash
-docker compose -f docker-compose.dev.yml up -d
-docker ps --format '{{.Names}} {{.Ports}}'
-```
-
-`interview-postgres` 必须显示 `0.0.0.0:5432->5432/tcp`，`interview-redis` 必须显示 `0.0.0.0:6379->6379/tcp`。如果只显示 `5432/tcp` 或 `6379/tcp`，说明旧容器没有应用端口映射配置，重建容器即可：
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --force-recreate postgres redis
-```
-
-如果你的本机 `5432` 或 `6379` 已被其他项目占用，可以修改 `.env` 中的 `POSTGRES_PORT` / `REDIS_PORT`，并同步调整 `docker-compose.dev.yml` 里的端口映射，确保应用配置和容器发布端口一致。
-
-### Q: 简历分析失败
-
-检查一下阿里云 DashScope API KEY 是否配置正确（申请地址：<https://bailian.console.aliyun.com/>）。
-
-### Q: 设置页新增/切换模型后不生效？
-
-运行时 Provider 配置默认写到 `~/.interview-guide/llm-providers.yml` 和 `~/.interview-guide/llm-providers.env`。可以在设置页点击测试连接，或调用 `/api/llm-provider/reload` 重新加载配置。Docker 部署时如果希望配置持久化，建议为该目录挂载卷。
-
-### Q: 语音面试无法识别或没有声音？
-
-语音面试的 ASR/TTS 默认也使用 `AI_BAILIAN_API_KEY`。请检查浏览器麦克风权限、后端日志中的 DashScope WebSocket 连接状态，以及设置页里的 ASR/TTS 测试结果。无耳机时可能触发回声录入，建议先使用手动提交模式或佩戴耳机测试。
-
-### Q: 简历分析一直显示"分析中"？
-
-检查 Redis 连接和 Stream Consumer 是否正常运行。查看后端日志确认是否有错误。
-
-### Q: PDF 导出失败或中文显示异常？
-
-项目已内置中文字体（珠圆玉润仿宋），支持跨平台导出。如遇到问题，请检查：
-- 字体文件是否存在：`app/src/main/resources/fonts/ZhuqueFangsong-Regular.ttf`
-- 检查日志中的字体加载信息
-- 确认 iText 依赖是否正确
-
-### Q: Windows PowerShell 下后端日志中文乱码？
-
-**原因简述**：后端与 Logback 按 **UTF-8** 输出日志；中文 Windows 下控制台默认多为 **GBK（代码页 936）**，且 PowerShell 的 `$OutputEncoding`、控制台编码若未统一为 UTF-8，显示时就会把同一串字节解释错，出现乱码。
-
-**本项目已做的配置**（一般无需再改）：根目录 `gradle.properties`（Gradle 进程 UTF-8）、`app/src/main/resources/logback-spring.xml`（控制台日志 UTF-8）、`app/build.gradle` 中 `bootRun` 的 JVM 参数（含 `file.encoding` / `stdout.encoding` / `stderr.encoding`）。
-
-**仍乱码时（PowerShell 侧）**：在启动 `.\gradlew.bat :app:bootRun` 的同一终端先执行下面一段；或写入 **PowerShell 配置文件**（`$PROFILE`）以便每次自动生效：
-
-```powershell
-chcp 65001 | Out-Null
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-[Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false)
-$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-```
-
-新建或编辑配置文件：`if (!(Test-Path $PROFILE)) { New-Item -Path $PROFILE -ItemType File -Force }`，再 `notepad $PROFILE` 将上述内容粘贴保存；新开终端后生效，或执行 `. $PROFILE` 立即加载。若提示脚本无法执行，可执行一次：`Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`。
-
-在 PowerShell 中建议使用 `.\gradlew.bat :app:bootRun`（或仓库根目录的 `.\gradlew.bat`），避免与执行策略、路径解析相关的问题。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 许可证
-
-AGPL-3.0 License（只要通过网络提供服务，就必须向用户公开修改后的源码）
+如果这个项目对你有帮助，欢迎给上游点个 star。

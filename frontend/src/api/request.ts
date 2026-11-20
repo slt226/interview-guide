@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import { clearAuth, getToken } from '../utils/authStorage';
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -23,6 +24,19 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const instance: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 60000,
+});
+
+/**
+ * 请求拦截器：所有请求自动带上 Authorization 头。
+ * token 从 localStorage 读，不经过 React 状态，
+ * 因此这里不需要依赖任何组件。
+ */
+instance.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers.set('Authorization', `Bearer ${token}`);
+  }
+  return config;
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -133,6 +147,16 @@ instance.interceptors.response.use(
     return response;
   },
   async (error) => {
+    // 401 由 Spring Security 直接返回，不是 Result 结构，必须先拦掉。
+    // 业务失败（如登录密码错误）走的是 HTTP 200 + code 13002，不会进入这里。
+    if (error.response?.status === 401) {
+      clearAuth();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
+      return Promise.reject(new Error('登录已过期，请重新登录'));
+    }
+
     // 有响应的情况：后端返回了结果（即使是错误）
     if (error.response) {
       const { data } = error.response;

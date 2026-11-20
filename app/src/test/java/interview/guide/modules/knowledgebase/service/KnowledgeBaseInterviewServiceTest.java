@@ -14,6 +14,9 @@ import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionFollowUp
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionStatus;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseQuestionRepository;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
+import interview.guide.testsupport.TestAuthContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,11 +50,21 @@ class KnowledgeBaseInterviewServiceTest {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
+  @BeforeEach
+  void loginForOwnershipChecks() {
+    TestAuthContext.login();
+  }
+
+  @AfterEach
+  void logout() {
+    TestAuthContext.logout();
+  }
+
   @Test
   @DisplayName("启用题目不足时拒绝创建知识库面试")
   void shouldRejectWhenActiveQuestionsAreInsufficient() {
     KnowledgeBaseInterviewService service = newService();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of());
 
@@ -73,7 +86,7 @@ class KnowledgeBaseInterviewServiceTest {
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
     InterviewSessionDTO expected =
         new InterviewSessionDTO("session1", "", 2, 0, List.of(), SessionStatus.CREATED, 1L, null);
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -100,7 +113,7 @@ class KnowledgeBaseInterviewServiceTest {
   void shouldFilterByCategoryWhenCategoryProvided() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndCategoryAndStatusOrderByUpdatedAtDesc(
         1L, "mid", "Redis", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -121,7 +134,7 @@ class KnowledgeBaseInterviewServiceTest {
   void shouldPassNormalizedCategoryToSession() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndCategoryAndStatusOrderByUpdatedAtDesc(
         1L, "mid", "MySQL", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -142,7 +155,7 @@ class KnowledgeBaseInterviewServiceTest {
   void shouldPickFollowUpsRandomlyWhenPoolLargerThanCount() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithThreeFollowUps();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -172,7 +185,7 @@ class KnowledgeBaseInterviewServiceTest {
   void shouldRejectWhenFollowUpPoolIsSmallerThanRequestedCount() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
 
@@ -201,7 +214,7 @@ class KnowledgeBaseInterviewServiceTest {
         new KnowledgeBaseQuestionFollowUpDTO("追问2"),
         new KnowledgeBaseQuestionFollowUpDTO("追问3")
     ));
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE))
         .thenReturn(List.of(noFollowUp, oneFollowUp, threeFollowUps));
@@ -243,7 +256,7 @@ class KnowledgeBaseInterviewServiceTest {
     KnowledgeBaseQuestionEntity mysql = questionWithFollowUps("MySQL", List.of(
         new KnowledgeBaseQuestionFollowUpDTO("追问1")
     ));
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAndUserId(1L, TestAuthContext.DEFAULT_USER_ID)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(redis, mysql));
 

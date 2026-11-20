@@ -28,3 +28,16 @@ frontend/test-results/
 frontend/playwright-report/
 /.agents
 skills-lock.json
+
+# 本地数据库备份（含 app_user 等真实数据，禁止提交）
+backup_before_isolation.sql
+backup_*.sql
+*.dump
+
+# 本地验收脚本与运行日志
+.tmp_step7/
+compose-up.log
+*.log
+
+# 本地 AI 工作记忆
+.workbuddy/

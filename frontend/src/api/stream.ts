@@ -267,9 +267,14 @@ async function readStream(response: Response, options: StreamSseOptions): Promis
     buffer = flushBuffer(buffer, false, options);
   }
 }
-
+import{getToken} from '../utils/authStorage'
 export async function streamSse(options: StreamSseOptions): Promise<void> {
   try {
+    const headers = new Headers(options.init?.headers);
+        const token = getToken();
+        if (token) {
+          headers.set('Authorization', `Bearer ${token}`);
+        }
     const response = await fetch(toApiUrl(options.url), options.init);
     await assertStreamResponse(response);
     await readStream(response, options);

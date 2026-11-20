@@ -1,6 +1,8 @@
 package interview.guide.modules.knowledgebase;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.result.Result;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseListItemDTO;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseStatsDTO;
@@ -61,7 +63,7 @@ public class KnowledgeBaseController {
             try {
                 status = VectorStatus.valueOf(vectorStatus.toUpperCase());
             } catch (IllegalArgumentException e) {
-                return Result.error("无效的向量化状态: " + vectorStatus);
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的向量化状态: " + vectorStatus);
             }
         }
         
@@ -73,9 +75,11 @@ public class KnowledgeBaseController {
      */
     @GetMapping("/api/knowledgebase/{id}")
     public Result<KnowledgeBaseListItemDTO> getKnowledgeBase(@PathVariable Long id) {
+        // 别人的知识库与不存在都返回同一个 NOT_FOUND，不泄露"这个 id 确实存在"
         return listService.getKnowledgeBase(id)
                 .map(Result::success)
-                .orElse(Result.error("知识库不存在"));
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, "知识库不存在"));
     }
 
     /**

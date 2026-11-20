@@ -38,7 +38,8 @@ public class InterviewHistoryService {
      */
     @Transactional(readOnly = true)
     public InterviewDetailDTO getInterviewDetail(String sessionId) {
-        Optional<InterviewSessionEntity> sessionOpt = interviewPersistenceService.findBySessionId(sessionId);
+        Optional<InterviewSessionEntity> sessionOpt =
+            interviewPersistenceService.findOwnedBySessionId(sessionId);
         if (sessionOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
         }
@@ -147,7 +148,8 @@ public class InterviewHistoryService {
      * 导出面试报告为PDF
      */
     public byte[] exportInterviewPdf(String sessionId) {
-        Optional<InterviewSessionEntity> sessionOpt = interviewPersistenceService.findBySessionId(sessionId);
+        Optional<InterviewSessionEntity> sessionOpt =
+            interviewPersistenceService.findOwnedBySessionId(sessionId);
         if (sessionOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
         }

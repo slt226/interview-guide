@@ -4,6 +4,9 @@ import interview.guide.modules.interview.model.InterviewSessionEntity;
 import interview.guide.modules.interview.repository.InterviewAnswerRepository;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
+import interview.guide.testsupport.TestAuthContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +35,16 @@ class InterviewPersistenceServiceTest {
   private ResumeRepository resumeRepository;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  @BeforeEach
+  void loginForOwnershipChecks() {
+    TestAuthContext.login();
+  }
+
+  @AfterEach
+  void logout() {
+    TestAuthContext.logout();
+  }
 
   @Test
   @DisplayName("知识库面试保存时写入 interviewCategory")

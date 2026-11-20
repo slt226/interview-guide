@@ -152,8 +152,8 @@ public class AnswerEvaluationService {
 
     private boolean hasQuestionReference(InterviewQuestionDTO question) {
         return hasText(question.referenceAnswer())
-            || hasText(question.scoringRubric())
-            || (question.keyPoints() != null && !question.keyPoints().isEmpty());
+                || hasText(question.scoringRubric())
+                || (question.keyPoints() != null && !question.keyPoints().isEmpty());
     }
 
     private void appendIfPresent(StringBuilder sb, String label, String value) {

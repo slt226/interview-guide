@@ -81,7 +81,18 @@ public enum ErrorCode {
     MODULE_NOT_FOUND(11008, "模块不存在"),
     VOICE_CONFIG_READ_FAILED(11009, "读取语音服务配置失败"),
     VOICE_CONFIG_WRITE_FAILED(11010, "写入语音服务配置失败"),
-    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败");
+    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败"),
+    // ========== 异步任务可靠性模块错误 12xxx ==========
+    DEAD_LETTER_NOT_FOUND(12001, "死信记录不存在"),
+    DEAD_LETTER_REPLAY_FAILED(12002, "死信重投失败"),
+    DEAD_LETTER_ALREADY_REPLAYED(12003, "死信已重投，请勿重复操作"),
+    DEAD_LETTER_STATUS_INVALID(12004, "死信状态非法，无法执行该操作"),
+    IDEMPOTENCY_CONFLICT(12005, "检测到重复请求，已自动忽略"),
+    // ========== 认证模块错误 13xxx ==========
+    USERNAME_ALREADY_EXISTS(13001, "用户名已被占用"),
+    INVALID_CREDENTIALS(13002, "用户名或密码错误");
+
+
 
     private final Integer code;
     private final String message;

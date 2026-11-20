@@ -299,6 +299,13 @@ app:
       channels: ${APP_VOICE_INTERVIEW_AUDIO_CHANNELS:1}
       chunk-duration: ${APP_VOICE_INTERVIEW_AUDIO_CHUNK_DURATION:2000}  # 2 seconds
 
+  # JWT 配置：对应 JwtProperties(prefix = "app.jwt")
+  # 密钥只放 .env，本文件只引用环境变量；冒号后留空表示没有默认值，缺失即启动失败
+  jwt:
+    secret: ${APP_JWT_SECRET:}
+    # Token 有效期（分钟）
+    expiration-minutes: ${APP_JWT_EXPIRATION_MINUTES:120}
+
 management:
   endpoints:
     web:
@@ -308,3 +315,5 @@ management:
     health:
       probes:
         enabled: true
+
+

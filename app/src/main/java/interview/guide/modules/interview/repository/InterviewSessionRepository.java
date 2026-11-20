@@ -13,12 +13,51 @@ import java.util.Optional;
 
 /**
  * 面试会话Repository
+ *
+ * 对外查询一律使用 sessionId + userId 组合；
+ * 只带 sessionId 的方法留给异步评估消费者等系统身份。
  */
 @Repository
 public interface InterviewSessionRepository extends JpaRepository<InterviewSessionEntity, Long> {
 
+    // ==================== 用户视角 ====================
+
     /**
-     * 根据会话ID查找
+     * 按会话ID + 归属用户查找
+     */
+    Optional<InterviewSessionEntity> findBySessionIdAndUserId(String sessionId, Long userId);
+
+    /**
+     * 当前用户的面试记录（按创建时间倒序）
+     */
+    List<InterviewSessionEntity> findByUserIdOrderByCreatedAtDesc(Long userId);
+
+    /**
+     * 当前用户某个简历下未完成的面试
+     */
+    Optional<InterviewSessionEntity> findFirstByUserIdAndResumeIdAndStatusInOrderByCreatedAtDesc(
+        Long userId, Long resumeId, List<SessionStatus> statuses);
+
+    /**
+     * 当前用户最近的面试记录（通用模式历史题去重）
+     */
+    List<InterviewSessionEntity> findTop10ByUserIdAndSkillIdOrderByCreatedAtDesc(Long userId, String skillId);
+
+    /**
+     * 当前用户 + 简历 + skillId 的最近面试记录
+     */
+    List<InterviewSessionEntity> findTop10ByUserIdAndResumeIdAndSkillIdOrderByCreatedAtDesc(
+        Long userId, Long resumeId, String skillId);
+
+    /**
+     * 幂等键只在"当前用户内"有效，避免 A 的 requestId 把 B 的创建请求顶掉
+     */
+    Optional<InterviewSessionEntity> findByRequestIdAndUserId(String requestId, Long userId);
+
+    // ==================== 系统视角（异步评估 / 清理） ====================
+
+    /**
+     * 按会话ID查找（异步消费者使用，此时没有登录态）
      */
     Optional<InterviewSessionEntity> findBySessionId(String sessionId);
 
@@ -29,50 +68,11 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
      */
     @Query("SELECT s FROM InterviewSessionEntity s LEFT JOIN FETCH s.resume WHERE s.sessionId = :sessionId")
     Optional<InterviewSessionEntity> findBySessionIdWithResume(@Param("sessionId") String sessionId);
-    
+
     /**
-     * 根据简历查找所有面试记录
-     */
-    List<InterviewSessionEntity> findByResumeOrderByCreatedAtDesc(ResumeEntity resume);
-    
-    /**
-     * 根据简历ID查找所有面试记录
+     * 根据简历ID查找所有面试记录（简历归属已在上游校验）
      */
     List<InterviewSessionEntity> findByResumeIdOrderByCreatedAtDesc(Long resumeId);
 
-    /**
-     * 根据简历ID查找最近的面试记录（用于历史题去重）
-     */
-    List<InterviewSessionEntity> findTop10ByResumeIdOrderByCreatedAtDesc(Long resumeId);
-    
-    /**
-     * 查找简历的未完成面试（CREATED或IN_PROGRESS状态）
-     */
-    Optional<InterviewSessionEntity> findFirstByResumeIdAndStatusInOrderByCreatedAtDesc(
-        Long resumeId, 
-        List<SessionStatus> statuses
-    );
-    
-    /**
-     * 根据简历ID和状态查找会话
-     */
-    Optional<InterviewSessionEntity> findByResumeIdAndStatusIn(
-        Long resumeId,
-        List<SessionStatus> statuses
-    );
-
-    /**
-     * 查找所有面试会话（按创建时间倒序）
-     */
-    List<InterviewSessionEntity> findAllByOrderByCreatedAtDesc();
-
-    /**
-     * 根据 skillId 查找最近的面试记录（用于通用模式历史题去重）
-     */
-    List<InterviewSessionEntity> findTop10BySkillIdOrderByCreatedAtDesc(String skillId);
-
-    /**
-     * 根据 resumeId + skillId 查找最近的面试记录（精确匹配）
-     */
-    List<InterviewSessionEntity> findTop10ByResumeIdAndSkillIdOrderByCreatedAtDesc(Long resumeId, String skillId);
+    List<InterviewSessionEntity> findByResumeOrderByCreatedAtDesc(ResumeEntity resume);
 }

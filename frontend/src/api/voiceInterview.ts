@@ -1,5 +1,5 @@
 import { request } from './request';
-
+import { getToken } from '../utils/authStorage';
 // ========== 类型定义 ==========
 
 export interface CreateSessionRequest {
@@ -14,6 +14,19 @@ export interface CreateSessionRequest {
   hrEnabled?: boolean;
   plannedDuration?: number;
   llmProvider?: string;
+}
+
+/**
+ * WebSocket 握手无法设置请求头，token 只能放在 query 参数上。
+ * 统一在连接类里拼接，避免每个调用点各写一遍。
+ */
+function withToken(rawUrl: string): string {
+  const token = getToken();
+  if (!token) {
+    return rawUrl;
+  }
+  const separator = rawUrl.includes('?') ? '&' : '?';
+  return `${rawUrl}${separator}token=${encodeURIComponent(token)}`;
 }
 
 export interface SessionResponse {
@@ -223,10 +236,10 @@ export const voiceInterviewApi = {
 
   /**
    * Get all sessions
+   * 不再传 userId：服务端按 token 里的登录态过滤，"我是谁"不能由前端声明
    */
-  async getAllSessions(userId?: string, status?: string): Promise<SessionMeta[]> {
+  async getAllSessions(status?: string): Promise<SessionMeta[]> {
     const params = new URLSearchParams();
-    if (userId) params.append('userId', userId);
     if (status) params.append('status', status);
 
     return request.get<SessionMeta[]>(
@@ -254,7 +267,8 @@ export class VoiceInterviewWebSocket {
   private reconnectDelay = 2000;
 
   constructor(_sessionId: number, url: string, handlers: WebSocketEventHandlers) {
-    this.url = url;
+    // 连上之前先确认身份：握手阶段服务端只认 query 里的 token
+    this.url = withToken(url);
     this.handlers = handlers;
   }
 

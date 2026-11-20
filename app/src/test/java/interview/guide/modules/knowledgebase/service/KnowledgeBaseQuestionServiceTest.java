@@ -7,6 +7,8 @@ import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionStatus;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseQuestionRepository;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
+import interview.guide.testsupport.TestAuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -17,8 +19,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,6 +43,10 @@ class KnowledgeBaseQuestionServiceTest {
 
   @BeforeEach
   void setUp() {
+    TestAuthContext.login();
+    // 知识库归属校验统一桩住：任何 kbId 都当作属于当前测试用户
+    lenient().when(knowledgeBaseRepository.findByIdAndUserId(anyLong(), anyLong()))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     service = new KnowledgeBaseQuestionService(
         knowledgeBaseRepository,
         questionRepository,
@@ -45,6 +54,11 @@ class KnowledgeBaseQuestionServiceTest {
         questionGenStreamProducer,
         questionGenerationStateService
     );
+  }
+
+  @AfterEach
+  void tearDown() {
+    TestAuthContext.logout();
   }
 
   @Nested

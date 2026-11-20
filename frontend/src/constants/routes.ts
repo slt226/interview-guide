@@ -4,6 +4,7 @@ export const ROUTES = {
   interviewSession: (sessionId: string) => `/interview/session/${sessionId}`,
   resumeUpload: '/upload',
   knowledgebaseUpload: '/knowledgebase/upload',
+  deadLetter: '/dead-letter',
 } as const;
 
 export const ROUTE_PATTERNS = {

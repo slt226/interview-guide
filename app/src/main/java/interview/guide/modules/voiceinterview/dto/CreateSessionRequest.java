@@ -16,6 +16,8 @@ public class CreateSessionRequest {
     private String customJdText;
     private Long resumeId;
 
+    // 注意：@Builder.Default 在 @NoArgsConstructor 下不会生效（Jackson 反序列化缺省字段会得到 null），
+    // 因此服务层必须用 Boolean.TRUE.equals(...) 兜底，不能直接拆箱
     @Builder.Default
     private Boolean introEnabled = false;
     @Builder.Default

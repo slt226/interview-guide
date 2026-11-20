@@ -31,8 +31,8 @@ public class ResumeDeleteService {
     public void deleteResume(Long id) {
         log.info("收到删除简历请求: id={}", id);
         
-        // 获取简历信息（用于删除存储文件）
-        ResumeEntity resume = persistenceService.findById(id)
+        // 获取简历信息（用于删除存储文件）——只查当前用户名下的记录
+        ResumeEntity resume = persistenceService.findOwnedById(id)
             .orElseThrow(() -> new BusinessException(
                 ErrorCode.RESUME_NOT_FOUND));
         

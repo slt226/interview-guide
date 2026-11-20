@@ -12,6 +12,10 @@ public class InterviewScheduleEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // 归属用户：数据隔离的唯一可信来源，只能从登录态取
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
+
     @Column(name = "company_name", nullable = false)
     private String companyName;
 

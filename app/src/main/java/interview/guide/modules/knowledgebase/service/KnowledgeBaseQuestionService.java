@@ -3,6 +3,7 @@ package interview.guide.modules.knowledgebase.service;
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.modules.knowledgebase.listener.QuestionGenStreamProducer;
 import interview.guide.modules.knowledgebase.model.CreateKnowledgeBaseQuestionRequest;
 import interview.guide.modules.knowledgebase.model.GenerateKnowledgeBaseQuestionsRequest;
@@ -53,6 +54,8 @@ public class KnowledgeBaseQuestionService {
                                                       String category,
                                                       String difficulty,
                                                       String keyword) {
+    // 先确认知识库归属，再取题目（否则等于绕过父表直接读子表）
+    getKnowledgeBase(knowledgeBaseId);
     List<KnowledgeBaseQuestionEntity> questions = status == null
         ? questionRepository.findByKnowledgeBase_IdOrderByUpdatedAtDesc(knowledgeBaseId)
         : questionRepository.findByKnowledgeBase_IdAndStatusOrderByUpdatedAtDesc(knowledgeBaseId, status);
@@ -73,6 +76,7 @@ public class KnowledgeBaseQuestionService {
    */
   @Transactional(readOnly = true)
   public List<CategoryCount> listCategories(Long knowledgeBaseId) {
+    getKnowledgeBase(knowledgeBaseId);
     return questionRepository.findCategoryCounts(knowledgeBaseId);
   }
 
@@ -155,6 +159,8 @@ public class KnowledgeBaseQuestionService {
   public QuestionGenStatusResponse submitGenerationTask(
       Long knowledgeBaseId,
       GenerateKnowledgeBaseQuestionsRequest request) {
+    // 归属校验必须在投递任务之前：异步消费者是系统身份，不会再校验
+    getKnowledgeBase(knowledgeBaseId);
     String difficulty = normalizeDifficulty(request.difficulty());
     int followUpCount = request.followUpCount() == null
         ? DEFAULT_FOLLOW_UP_COUNT
@@ -178,6 +184,7 @@ public class KnowledgeBaseQuestionService {
 
   @Transactional(readOnly = true)
   public QuestionGenStatusResponse getGenerationStatus(Long knowledgeBaseId) {
+    getKnowledgeBase(knowledgeBaseId);
     return questionGenerationStateService.getStatus(knowledgeBaseId);
   }
 
@@ -224,13 +231,27 @@ public class KnowledgeBaseQuestionService {
   }
 
   private KnowledgeBaseEntity getKnowledgeBase(Long knowledgeBaseId) {
-    return knowledgeBaseRepository.findById(knowledgeBaseId)
+    // 只能访问自己的知识库；别人的 id 一律当作不存在
+    return knowledgeBaseRepository.findByIdAndUserId(knowledgeBaseId, CurrentUser.requireId())
         .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
   }
 
+  /**
+   * 题目是子表，没有 user_id（归属通过父表继承）。
+   * 因此按 questionId 操作时必须回查父表，确认父知识库属于当前用户。
+   */
   private KnowledgeBaseQuestionEntity getQuestion(Long questionId) {
-    return questionRepository.findById(questionId)
+    KnowledgeBaseQuestionEntity question = questionRepository.findById(questionId)
         .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND));
+
+    Long kbId = question.getKnowledgeBaseId() != null
+        ? question.getKnowledgeBaseId()
+        : (question.getKnowledgeBase() != null ? question.getKnowledgeBase().getId() : null);
+    if (kbId == null || knowledgeBaseRepository
+        .findByIdAndUserId(kbId, CurrentUser.requireId()).isEmpty()) {
+      throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND);
+    }
+    return question;
   }
 
   private boolean containsKeyword(KnowledgeBaseQuestionEntity question, String keyword) {

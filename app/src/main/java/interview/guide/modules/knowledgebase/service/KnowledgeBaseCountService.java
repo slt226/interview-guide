@@ -2,6 +2,7 @@ package interview.guide.modules.knowledgebase.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import lombok.RequiredArgsConstructor;
@@ -38,8 +39,11 @@ public class KnowledgeBaseCountService {
         // 去重
         List<Long> uniqueIds = knowledgeBaseIds.stream().distinct().toList();
 
-        // 验证所有知识库是否存在
-        Set<Long> existingIds = new HashSet<>(knowledgeBaseRepository.findAllById(uniqueIds)
+        // 验证所有知识库存在，且都属于当前用户
+        // 这里是"传一组 kbId 来做问答"的唯一闸口：别人的 id 会直接 404，
+        // 从而挡住"改请求体里的 kbIds 就能拿别人文档回答问题"的越权路径
+        Set<Long> existingIds = new HashSet<>(knowledgeBaseRepository
+                .findByIdInAndUserId(uniqueIds, CurrentUser.requireId())
                 .stream().map(KnowledgeBaseEntity::getId).toList());
 
         for (Long id : uniqueIds) {

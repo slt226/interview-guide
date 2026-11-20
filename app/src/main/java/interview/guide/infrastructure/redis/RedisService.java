@@ -59,6 +59,11 @@ public class RedisService {
         RBucket<T> bucket = redissonClient.getBucket(key);
         bucket.set(value);
     }
+    public <T> boolean trySetIfAbsent(String key, T value, Duration timeout) {
+        RBucket<T> bucket = redissonClient.getBucket(key);
+        return bucket.trySet(value, timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
 
     /**
      * 设置值（带过期时间）
@@ -526,7 +531,6 @@ public class RedisService {
         RList<T> list = redissonClient.getList(key);
         return list.readAll();
     }
-
     // ==================== 工具方法 ====================
 
     /**

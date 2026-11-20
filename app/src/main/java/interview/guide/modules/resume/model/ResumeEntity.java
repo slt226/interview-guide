@@ -11,16 +11,22 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "resumes", indexes = {
-    @Index(name = "idx_resume_hash", columnList = "fileHash", unique = true)
+    // 去重范围是"用户内"而非全局：不同用户上传同一份文件应各自独立
+    @Index(name = "uk_resume_user_hash", columnList = "userId,fileHash", unique = true),
+    @Index(name = "idx_resume_user_uploaded", columnList = "userId,uploadedAt")
 })
 public class ResumeEntity {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
-    // 文件内容的SHA-256哈希值，用于去重
-    @Column(nullable = false, unique = true, length = 64)
+
+    // 归属用户：数据隔离的唯一可信来源，只能从登录态取，绝不接受前端传入
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
+
+    // 文件内容的SHA-256哈希值，用于用户内去重
+    @Column(nullable = false, length = 64)
     private String fileHash;
     
     // 原始文件名
@@ -79,7 +85,15 @@ public class ResumeEntity {
     public void setId(Long id) {
         this.id = id;
     }
-    
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
+    }
+
     public String getFileHash() {
         return fileHash;
     }

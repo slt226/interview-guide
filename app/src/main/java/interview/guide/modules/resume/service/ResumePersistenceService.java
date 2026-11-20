@@ -2,6 +2,7 @@ package interview.guide.modules.resume.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.security.CurrentUser;
 import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.mapper.ResumeMapper;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
@@ -43,9 +44,12 @@ public class ResumePersistenceService {
      * @return 如果存在返回已有的简历实体，否则返回空
      */
     public Optional<ResumeEntity> findExistingResume(MultipartFile file) {
+        // 归属只能来自登录态：未登录会直接 401，不会去查全表
+        Long userId = CurrentUser.requireId();
         try {
             String fileHash = fileHashService.calculateHash(file);
-            Optional<ResumeEntity> existing = resumeRepository.findByFileHash(fileHash);
+            // 去重范围限定在当前用户内，否则 B 上传同文件会命中 A 的记录
+            Optional<ResumeEntity> existing = resumeRepository.findByUserIdAndFileHash(userId, fileHash);
             
             if (existing.isPresent()) {
                 log.info("检测到重复简历: hash={}", fileHash);
@@ -71,6 +75,8 @@ public class ResumePersistenceService {
             String fileHash = fileHashService.calculateHash(file);
             
             ResumeEntity resume = new ResumeEntity();
+            // owner 一律从登录态取，绝不接受前端传入的 userId
+            resume.setUserId(CurrentUser.requireId());
             resume.setFileHash(fileHash);
             resume.setOriginalFilename(file.getOriginalFilename());
             resume.setFileSize(file.getSize());
@@ -129,10 +135,12 @@ public class ResumePersistenceService {
     }
     
     /**
-     * 获取所有简历列表
+     * 获取当前用户的简历列表
+     *
+     * 全表 findAll() 已被移除：留下来的全表查询迟早会有人误用
      */
     public List<ResumeEntity> findAllResumes() {
-        return resumeRepository.findAll();
+        return resumeRepository.findByUserIdOrderByUploadedAtDesc(CurrentUser.requireId());
     }
     
     /**
@@ -174,19 +182,31 @@ public class ResumePersistenceService {
     }
     
     /**
-     * 根据ID获取简历
+     * 根据ID获取简历（不校验归属）
+     *
+     * 仅限"系统身份"使用：异步消费、定时任务，以及已经校验过归属后的内部续操作。
+     * HTTP 入口请用 {@link #findOwnedById(Long)}。
      */
     public Optional<ResumeEntity> findById(Long id) {
         return resumeRepository.findById(id);
     }
-    
+
+    /**
+     * 按 id 获取"当前用户的"简历
+     * 查不到与不属于自己都返回同一个 NOT_FOUND，避免泄露资源存在性
+     */
+    public Optional<ResumeEntity> findOwnedById(Long id) {
+        return resumeRepository.findByIdAndUserId(id, CurrentUser.requireId());
+    }
+
     /**
      * 删除简历及其所有关联数据
      * 包括：简历分析记录、面试会话（会自动删除面试答案）
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteResume(Long id) {
-        Optional<ResumeEntity> resumeOpt = resumeRepository.findById(id);
+        // 用 owner 条件查，删不到别人的数据
+        Optional<ResumeEntity> resumeOpt = findOwnedById(id);
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }

@@ -116,11 +116,10 @@ public class VoiceInterviewController {
      */
     @GetMapping("/sessions")
     public Result<List<SessionMetaDTO>> getAllSessions(
-        @RequestParam(required = false) String userId,
         @RequestParam(required = false) String status
     ) {
-        log.info("Getting sessions for user: {}, status: {}", userId, status);
-        List<SessionMetaDTO> sessions = voiceInterviewService.getAllSessions(userId, status);
+        // userId 不再从请求参数取——那等于让前端自己声明"我是谁"
+        List<SessionMetaDTO> sessions = voiceInterviewService.getAllSessions(status);
         return Result.success(sessions);
     }
 
@@ -157,7 +156,7 @@ public class VoiceInterviewController {
     public Result<VoiceEvaluationStatusDTO> getEvaluation(@PathVariable Long sessionId) {
         log.info("Getting evaluation status for session: {}", sessionId);
 
-        VoiceInterviewSessionEntity session = voiceInterviewService.getSession(sessionId);
+        VoiceInterviewSessionEntity session = voiceInterviewService.getOwnedSession(sessionId);
         if (session == null) {
             throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
         }
@@ -188,7 +187,7 @@ public class VoiceInterviewController {
     public Result<VoiceEvaluationStatusDTO> generateEvaluation(@PathVariable Long sessionId) {
         log.info("Triggering async evaluation for session: {}", sessionId);
 
-        VoiceInterviewSessionEntity session = voiceInterviewService.getSession(sessionId);
+        VoiceInterviewSessionEntity session = voiceInterviewService.getOwnedSession(sessionId);
         if (session == null) {
             throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
         }

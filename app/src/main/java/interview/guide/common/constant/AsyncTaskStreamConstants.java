@@ -1,5 +1,7 @@
 package interview.guide.common.constant;
 
+import java.time.Duration;
+
 /**
  * 异步任务 Redis Stream 通用常量
  * 包含知识库向量化和简历分析两个异步任务的配置
@@ -54,138 +56,54 @@ public final class AsyncTaskStreamConstants {
      */
     public static final int STREAM_MAX_LEN = 1000;
 
+    // ========== 死信与消费幂等相关 ==========
+
+    /**
+     * 幂等键前缀：消费入口用 Redis SET NX 占位，防止 Redis Stream at-least-once
+     * + XAUTOCLAIM（pending 5min 回收）导致的重复投递被重复处理/重复计费。
+     */
+    // ========== 死信与消费幂等相关 ==========
+    public static final String IDEMPOTENCY_KEY_PREFIX = "async:dedup:";
+    public static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(30);
+
+
     // ========== 知识库向量化 Stream 配置 ==========
 
-    /**
-     * 知识库向量化 Stream Key
-     */
     public static final String KB_VECTORIZE_STREAM_KEY = "knowledgebase:vectorize:stream";
-
-    /**
-     * 知识库向量化 Consumer Group 名称
-     */
     public static final String KB_VECTORIZE_GROUP_NAME = "vectorize-group";
-
-    /**
-     * 知识库向量化 Consumer 名称前缀
-     */
     public static final String KB_VECTORIZE_CONSUMER_PREFIX = "vectorize-consumer-";
-
-    /**
-     * 知识库ID字段
-     */
     public static final String FIELD_KB_ID = "kbId";
 
     // ========== 简历分析 Stream 配置 ==========
 
-    /**
-     * 简历分析 Stream Key
-     */
     public static final String RESUME_ANALYZE_STREAM_KEY = "resume:analyze:stream";
-
-    /**
-     * 简历分析 Consumer Group 名称
-     */
     public static final String RESUME_ANALYZE_GROUP_NAME = "analyze-group";
-
-    /**
-     * 简历分析 Consumer 名称前缀
-     */
     public static final String RESUME_ANALYZE_CONSUMER_PREFIX = "analyze-consumer-";
-
-    /**
-     * 简历ID字段
-     */
     public static final String FIELD_RESUME_ID = "resumeId";
 
     // ========== 面试评估 Stream 配置 ==========
 
-    /**
-     * 面试评估 Stream Key
-     */
     public static final String INTERVIEW_EVALUATE_STREAM_KEY = "interview:evaluate:stream";
-
-    /**
-     * 面试评估 Consumer Group 名称
-     */
     public static final String INTERVIEW_EVALUATE_GROUP_NAME = "evaluate-group";
-
-    /**
-     * 面试评估 Consumer 名称前缀
-     */
     public static final String INTERVIEW_EVALUATE_CONSUMER_PREFIX = "evaluate-consumer-";
-
-    /**
-     * 面试会话ID字段
-     */
     public static final String FIELD_SESSION_ID = "sessionId";
 
     // ========== 语音面试评估 Stream 配置 ==========
 
-    /**
-     * 语音面试评估 Stream Key
-     */
     public static final String VOICE_EVALUATE_STREAM_KEY = "voice:evaluate:stream";
-
-    /**
-     * 语音面试评估 Consumer Group 名称
-     */
     public static final String VOICE_EVALUATE_GROUP_NAME = "voice-evaluate-group";
-
-    /**
-     * 语音面试评估 Consumer 名称前缀
-     */
     public static final String VOICE_EVALUATE_CONSUMER_PREFIX = "voice-evaluate-consumer-";
-
-    /**
-     * 语音面试会话ID字段
-     */
     public static final String FIELD_VOICE_SESSION_ID = "voiceSessionId";
 
     // ========== 知识库问题生成 Stream 配置 ==========
 
-    /**
-     * 知识库问题生成 Stream Key
-     */
     public static final String KB_QUESTION_GEN_STREAM_KEY = "knowledgebase:question-gen:stream";
-
-    /**
-     * 知识库问题生成 Consumer Group 名称
-     */
     public static final String KB_QUESTION_GEN_GROUP_NAME = "question-gen-group";
-
-    /**
-     * 知识库问题生成 Consumer 名称前缀
-     */
     public static final String KB_QUESTION_GEN_CONSUMER_PREFIX = "question-gen-consumer-";
-
-    /**
-     * 任务ID字段（用于幂等判断）
-     */
     public static final String FIELD_TASK_ID = "taskId";
-
-    /**
-     * 难度字段
-     */
     public static final String FIELD_DIFFICULTY = "difficulty";
-
-    /**
-     * 题目数量字段
-     */
     public static final String FIELD_QUESTION_COUNT = "questionCount";
-
-    /**
-     * 追问数量字段
-     */
     public static final String FIELD_FOLLOW_UP_COUNT = "followUpCount";
-
-    /**
-     * 方向数量字段
-     */
     public static final String FIELD_CATEGORY_LIMIT = "categoryLimit";
-
-    /**
-     * LLM Provider字段
-     */
     public static final String FIELD_LLM_PROVIDER = "llmProvider";
 }
